@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Wallet / Budget Card Body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,38 C28,34.7 30.7,32 34,32 L74,32 C77.3,32 80,34.7 80,38 L80,70 C80,73.3 77.3,76 74,76 L34,76 C30.7,76 28,73.3 28,70 Z" />
+    <!-- Wallet Flap & Shadow -->
+    <path
+        android:fillColor="#D8E8E2"
+        android:pathData="M28,38 L54,52 L80,38 L80,43 L54,57 L28,43 Z" />
+    <!-- Wallet Clasp -->
+    <path
+        android:fillColor="#F6C844"
+        android:pathData="M66,54 C66,50.7 68.7,48 72,48 L80,48 L80,60 L72,60 C68.7,60 66,57.3 66,54 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M73,54 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+    <!-- Rising Trend / Growth Arrow in the wallet -->
+    <path
+        android:fillColor="#1F6F5C"
+        android:pathData="M36,66 L44,56 L52,60 L62,48 L62,54 L66,54 L66,44 L56,44 L56,48 L60,48 L52,56 L44,52 L34,64 Z" />
+</vector>

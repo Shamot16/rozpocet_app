@@ -1,0 +1,6 @@
+{
+  "name": "Rodinný rozpočet",
+  "description": "Moderná lokálna aplikácia pre správu rodinného rozpočtu, 12-mesačného výhľadu hotovosti a kreditných kariet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

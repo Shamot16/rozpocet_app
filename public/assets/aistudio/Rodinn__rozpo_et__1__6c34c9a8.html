@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="sk"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rodinný rozpočet</title>
+<style>
+:root{--bg:#f7f6f2;--card:#fff;--tx:#1d2320;--mut:#6b746f;--ln:#e4e2da;--ac:#1f6f5c;--in:#1f7a4d;--out:#b3402f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141816;--card:#1d2321;--tx:#e8ece9;--mut:#9aa5a0;--ln:#2d3532;--ac:#4cb89c;--in:#5cc58a;--out:#e8836f;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141816;--card:#1d2321;--tx:#e8ece9;--mut:#9aa5a0;--ln:#2d3532;--ac:#4cb89c;--in:#5cc58a;--out:#e8836f;color-scheme:dark}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 12px}h2{font-size:16px;margin:18px 0 8px}
+nav{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+nav button{flex:1;padding:9px 10px;border:1px solid var(--ln);background:var(--card);color:var(--tx);border-radius:10px;font:inherit;cursor:pointer}
+nav button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:12px;margin-bottom:12px}
+.sc{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:7px 6px;border-bottom:1px solid var(--ln);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}th{color:var(--mut);font-weight:600;font-size:13px}
+tr.sel td{background:color-mix(in srgb,var(--ac) 12%,transparent)}tbody tr{cursor:pointer}
+.in{color:var(--in)}.out{color:var(--out)}.mut{color:var(--mut)}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+input,select,textarea,.btn{font:inherit;padding:8px;border:1px solid var(--ln);border-radius:8px;background:var(--bg);color:var(--tx);width:100%}
+.btn{background:var(--ac);color:#fff;border:0;cursor:pointer;width:auto}.btn.g{background:transparent;color:var(--mut);border:1px solid var(--ln)}
+.warn{background:color-mix(in srgb,var(--out) 14%,transparent);border:1px solid var(--out);border-radius:10px;padding:10px;margin-bottom:12px}
+.x{background:none;border:0;color:var(--mut);cursor:pointer;font-size:16px}
+</style><script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script></head><body><main>
+<h1>Rodinný rozpočet</h1>
+<nav id="nav"></nav><div id="v"></div></main>
+<script>
+const $=s=>document.querySelector(s);
+const fmt=n=>new Intl.NumberFormat('sk-SK',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format(n);
+const fmt2=n=>new Intl.NumberFormat('sk-SK',{style:'currency',currency:'EUR'}).format(n);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CATS={out:['Bývanie','Energie a internet','Potraviny','Doprava','Deti a škola','Zdravie','Poistky','Splátky úverov','Zábava a voľný čas','Oblečenie','Rezerva a sporenie','Iné'],in:['Mzda','Prídavky a dávky','Iný príjem']};
+const FQ={weekly:'každý týždeň',monthly:'mesačne',quarterly:'štvrťročne',yearly:'ročne',once:'jednorazovo'};
+const MN=['január','február','marec','apríl','máj','jún','júl','august','september','október','november','december'];
+let S=(()=>{try{const r=localStorage.getItem('rr1');if(r)return JSON.parse(r)}catch(e){}return{bal:0,items:[],tx:[]}})();
+S.cards=S.cards||[];S.pays=S.pays||[];
+const save=()=>{try{localStorage.setItem('rr1',JSON.stringify(S))}catch(e){}};
+const uid=()=>Math.random().toString(36).slice(2,9);
+const pad=n=>String(n).padStart(2,'0');
+const now=new Date(),cy=now.getFullYear(),cm=now.getMonth();
+const today=`${cy}-${pad(cm+1)}-${pad(now.getDate())}`;
+let tab='ov',selM=0,actM=today.slice(0,7);
+
+function occ(it,y,m){
+ const[ay,am,ad]=it.date.split('-').map(Number),dim=new Date(y,m+1,0).getDate(),mi=(y*12+m)-(ay*12+am-1),dd=Math.min(ad,dim);
+ if(it.freq==='once')return mi===0?[ad]:[];
+ if(mi<0)return[];
+ if(it.freq==='monthly')return[dd];
+ if(it.freq==='quarterly')return mi%3===0?[dd]:[];
+ if(it.freq==='yearly')return mi%12===0?[dd]:[];
+ if(it.freq==='weekly'){const a=Date.UTC(ay,am-1,ad),r=[];for(let d=1;d<=dim;d++){const t=Date.UTC(y,m,d);if(t>=a&&((t-a)/864e5)%7===0)r.push(d)}return r}
+ return[];
+}
+const monthAt=i=>{const d=new Date(cy,cm+i,1);return[d.getFullYear(),d.getMonth()]};
+const plan=(y,m)=>{const r=[];S.items.forEach(it=>occ(it,y,m).forEach(d=>r.push({d,name:it.name,type:it.type,cat:it.cat,amt:it.amt})));return r.sort((a,b)=>a.d-b.d)};
+const sum=(l,t)=>l.filter(x=>x.type===t).reduce((a,x)=>a+x.amt,0);
+const catOpts=t=>CATS[t].map(c=>`<option>${c}</option>`).join('');
+function fillCats(p){$('#'+p+'_c').innerHTML=catOpts($('#'+p+'_t').value)}
+const num=s=>parseFloat(String(s).replace(',','.'))||0;
+
+function vOv(){
+ let b=S.bal,rows='',warn='',opens=[];
+ for(let i=0;i<12;i++){const[y,m]=monthAt(i),p=plan(y,m),inc=sum(p,'in'),out=sum(p,'out');opens.push(b);b+=inc-out;
+  if(b<0&&!warn)warn=`<div class="warn"><b>Pozor:</b> zostatok klesne pod nulu v mesiaci ${MN[m]} ${y}.</div>`;
+  rows+=`<tr class="${i===selM?'sel':''}" onclick="selM=${i};render()"><td>${MN[m]} ${y}</td><td class="in">${fmt(inc)}</td><td class="out">${fmt(out)}</td><td class="${inc-out<0?'out':'in'}">${fmt(inc-out)}</td><td><b class="${b<0?'out':''}">${fmt(b)}</b></td></tr>`}
+ const[y,m]=monthAt(selM);let run=opens[selM],det=plan(y,m).map(e=>{run+=e.type==='in'?e.amt:-e.amt;return`<tr><td>${e.d}.${m+1}.</td><td style="text-align:left">${esc(e.name)} <span class="mut">· ${e.cat}</span></td><td class="${e.type}">${e.type==='in'?'+':'−'}${fmt(e.amt)}</td><td class="${run<0?'out':''}">${fmt(run)}</td></tr>`}).join('');
+ return`<div class="card"><label class="mut">Zostatok na začiatku tohto mesiaca (všetky účty + hotovosť)</label><input type="number" value="${S.bal}" onchange="S.bal=num(this.value);save();render()"></div>${warn}
+ <div class="card sc"><table><thead><tr><th>Mesiac</th><th>Príjem</th><th>Výdavky</th><th>Saldo</th><th>Zostatok</th></tr></thead><tbody>${rows||''}</tbody></table>${S.items.length?'':'<p class="mut">Zatiaľ nemáš žiadne položky. Pridaj ich v záložke Pravidelné.</p>'}</div>
+ <h2>Čo a kedy: ${MN[m]} ${y}</h2><div class="card sc"><table><thead><tr><th>Dátum</th><th style="text-align:left">Položka</th><th>Suma</th><th>Zostatok</th></tr></thead><tbody>${det||'<tr><td colspan="4" class="mut">Nič naplánované.</td></tr>'}</tbody></table></div>`;
+}
+
+function vPlan(){
+ const l=S.items.slice().sort((a,b)=>a.type.localeCompare(b.type)||a.name.localeCompare(b.name,'sk')).map(it=>`<tr><td>${esc(it.name)}<br><span class="mut">${it.cat}</span></td><td class="mut">${FQ[it.freq]}<br>od ${it.date.split('-').reverse().join('.')}</td><td class="${it.type}">${it.type==='in'?'+':'−'}${fmt2(it.amt)}</td><td><button class="x" onclick="delItem('${it.id}')">✕</button></td></tr>`).join('');
+ return`<div class="card"><b>Nová pravidelná alebo plánovaná položka</b><div class="form" style="margin-top:8px">
+ <input id="p_n" placeholder="Názov (napr. nájom)"><select id="p_t" onchange="fillCats('p')"><option value="out">Výdavok</option><option value="in">Príjem</option></select>
+ <select id="p_c">${catOpts('out')}</select><input id="p_a" type="number" step="0.01" placeholder="Suma €">
+ <select id="p_f">${Object.entries(FQ).map(([k,v])=>`<option value="${k}" ${k==='monthly'?'selected':''}>${v}</option>`).join('')}</select>
+ <input id="p_d" type="date" value="${today}" title="Prvý dátum platby"></div>
+ <p class="mut" style="margin:8px 0">Dátum = prvá (alebo jediná) platba. Ďalšie sa dopočítajú podľa frekvencie.</p><button class="btn" onclick="addItem()">Pridať</button>
+ <button class="btn g" onclick="demo()">Načítať ukážku</button></div>
+ <div class="card sc"><table><tbody>${l||'<tr><td class="mut">Zatiaľ prázdne.</td></tr>'}</tbody></table></div>`;
+}
+function addItem(){const n=$('#p_n').value.trim(),a=num($('#p_a').value);if(!n||a<=0)return;
+ S.items.push({id:uid(),name:n,type:$('#p_t').value,cat:$('#p_c').value,amt:a,freq:$('#p_f').value,date:$('#p_d').value||today});save();render()}
+function delItem(id){S.items=S.items.filter(i=>i.id!==id);save();render()}
+function demo(){const d=n=>`${cy}-${pad(cm+1)}-${pad(n)}`,I=(name,type,cat,amt,freq,date)=>S.items.push({id:uid(),name,type,cat,amt,freq,date});
+ I('Mzda','in','Mzda',1800,'monthly',d(10));I('Prídavky na deti','in','Prídavky a dávky',100,'monthly',d(20));I('Nájom','out','Bývanie',600,'monthly',d(1));
+ I('Elektrina a plyn','out','Energie a internet',140,'monthly',d(15));I('Nákup potravín','out','Potraviny',90,'weekly',d(Math.min(now.getDate(),28)));
+ I('Poistenie auta','out','Poistky',280,'yearly',d(25));I('Rezerva','out','Rezerva a sporenie',150,'monthly',d(11));save();render()}
+
+function vAct(){
+ const tl=S.tx.filter(t=>t.date.startsWith(actM)).sort((a,b)=>b.date.localeCompare(a.date));
+ const[y,m]=actM.split('-').map(Number),p=plan(y,m-1),rows=[];
+ [['out',CATS.out],['in',CATS.in]].forEach(([t,cs])=>cs.forEach(c=>{const pl=p.filter(x=>x.type===t&&x.cat===c).reduce((a,x)=>a+x.amt,0),ac=tl.filter(x=>x.type===t&&x.cat===c).reduce((a,x)=>a+x.amt,0);
+  if(pl||ac){const diff=ac-pl,bad=t==='out'?diff>0:diff<0;rows.push(`<tr><td>${c} <span class="mut">${t==='in'?'(príjem)':''}</span></td><td>${fmt(pl)}</td><td>${fmt(ac)}</td><td class="${diff===0?'':bad?'out':'in'}">${diff>0?'+':''}${fmt(diff)}</td></tr>`)}}));
+ const tr=tl.map(t=>`<tr><td>${t.date.slice(8)}.${t.date.slice(5,7)}.</td><td style="text-align:left">${t.card?'💳 ':''}${esc(t.name)} <span class="mut">· ${t.cat}</span></td><td class="${t.type}">${t.type==='in'?'+':'−'}${fmt2(t.amt)}</td><td><button class="x" onclick="delTx('${t.id}')">✕</button></td></tr>`).join('');
+ return`<div class="card"><b>Zapísať skutočnú platbu</b><div class="form" style="margin-top:8px">
+ <input id="a_n" placeholder="Popis (napr. Tesco)"><select id="a_t" onchange="fillCats('a')"><option value="out">Výdavok</option><option value="in">Príjem</option></select>
+ <select id="a_c">${catOpts('out')}</select><input id="a_a" type="number" step="0.01" placeholder="Suma €"><input id="a_d" type="date" value="${today}">${S.cards.length?`<select id="a_k"><option value="">Bez karty</option>${S.cards.map(c=>`<option value="${c.id}">💳 ${esc(c.name)}</option>`).join('')}</select>`:''}</div>
+ <p style="margin:8px 0 0"><button class="btn" onclick="addTx()">Pridať</button></p></div>
+ <div class="card"><label class="mut">Mesiac</label><input type="month" value="${actM}" onchange="actM=this.value||actM;render()"></div>
+ <h2>Plán vs. skutočnosť</h2><div class="card sc"><table><thead><tr><th>Kategória</th><th>Plán</th><th>Skutočnosť</th><th>Rozdiel</th></tr></thead><tbody>${rows.join('')||'<tr><td colspan="4" class="mut">Bez dát za tento mesiac.</td></tr>'}</tbody></table></div>
+ <h2>Platby v mesiaci</h2><div class="card sc"><table><tbody>${tr||'<tr><td class="mut">Zatiaľ nič.</td></tr>'}</tbody></table></div>`;
+}
+function addTx(){const n=$('#a_n').value.trim(),a=num($('#a_a').value);if(!n||a<=0)return;
+ S.tx.push({id:uid(),name:n,type:$('#a_t').value,cat:$('#a_c').value,amt:a,date:$('#a_d').value||today,card:($('#a_k')&&$('#a_t').value==='out')?$('#a_k').value:''});actM=($('#a_d').value||today).slice(0,7);save();render()}
+function delTx(id){S.tx=S.tx.filter(t=>t.id!==id);save();render()}
+
+function vSet(){return`<div class="card"><b>Excel</b><p class="mut">Export vytvorí súbor .xlsx s hárkami Pravidelné, Skutočnosť, Nastavenia a Výhľad. Import načíta hárky Pravidelné, Skutočnosť a Nastavenia a nahradí súčasné dáta. Súbor môžeš upraviť v Exceli alebo Google Tabuľkách a nahrať späť.</p><p><button class="btn" onclick="xExp()">Exportovať do Excelu</button></p><label class="mut">Importovať z Excelu</label><input type="file" accept=".xlsx,.xls" onchange="xImp(this)"></div><div class="card"><b>Záloha dát</b><p class="mut">Dáta sú uložené iba v tomto prehliadači. Skopíruj text nižšie ako zálohu, alebo ho vlož a načítaj na inom zariadení.</p>
+ <textarea id="bk" rows="8">${esc(JSON.stringify(S))}</textarea><p><button class="btn" onclick="imp()">Načítať zo zálohy</button> <button class="btn g" onclick="if(confirm('Naozaj zmazať všetky dáta?')){S={bal:0,items:[],tx:[],cards:[],pays:[]};save();render()}">Zmazať všetko</button></p></div>`}
+function imp(){try{const o=JSON.parse($('#bk').value);if(o&&Array.isArray(o.items)&&Array.isArray(o.tx)){S=o;S.cards=S.cards||[];S.pays=S.pays||[];save();tab='ov';render()}}catch(e){alert('Neplatná záloha.')}}
+
+const TYP={in:'Príjem',out:'Výdavok'},FQR=Object.fromEntries(Object.entries(FQ).map(([k,v])=>[v,k]));
+async function xExp(){
+ if(typeof XLSX==='undefined'){alert('Knižnica pre Excel sa nenačítala.');return}
+ const wb=XLSX.utils.book_new(),add=(rows,h,n)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows,{header:h}),n);
+ add(S.items.map(i=>({'Názov':i.name,'Typ':TYP[i.type],'Kategória':i.cat,'Suma':i.amt,'Frekvencia':FQ[i.freq],'Prvý dátum':i.date})),['Názov','Typ','Kategória','Suma','Frekvencia','Prvý dátum'],'Pravidelné');
+ add(S.tx.map(t=>({'Dátum':t.date,'Popis':t.name,'Typ':TYP[t.type],'Kategória':t.cat,'Suma':t.amt,'Karta':(S.cards.find(c=>c.id===t.card)||{}).name||''})),['Dátum','Popis','Typ','Kategória','Suma','Karta'],'Skutočnosť');
+ add(S.cards.map(c=>({'Názov':c.name,'Limit':c.limit,'Deň výpisu':c.stmt,'Deň splatnosti':c.due,'Počiatočný dlh':c.debt0})),['Názov','Limit','Deň výpisu','Deň splatnosti','Počiatočný dlh'],'Karty');
+ add(S.pays.map(p=>({'Dátum':p.date,'Karta':(S.cards.find(c=>c.id===p.card)||{}).name||'','Suma':p.amt})),['Dátum','Karta','Suma'],'Splátky kariet');
+ add([{'Názov':'Zostatok na začiatku mesiaca','Hodnota':S.bal}],['Názov','Hodnota'],'Nastavenia');
+ let b=S.bal,vh=[];for(let i=0;i<12;i++){const[y,m]=monthAt(i),p=plan(y,m),inc=sum(p,'in'),out=sum(p,'out');b+=inc-out;vh.push({'Mesiac':MN[m]+' '+y,'Príjem':inc,'Výdavky':out,'Saldo':inc-out,'Zostatok':b})}
+ add(vh,['Mesiac','Príjem','Výdavky','Saldo','Zostatok'],'Výhľad');
+ const buf=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+ try{const dl=window.claude&&await window.claude.use('downloads');if(dl){await dl.save({filename:'rodinny-rozpocet.xlsx',data:buf})}else{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));a.download='rodinny-rozpocet.xlsx';document.body.appendChild(a);a.click();a.remove()}}catch(e){if(!e||e.code!=='declined')alert('Export sa nepodaril.')}
+}
+function xImp(inp){
+ const f=inp.files[0];if(!f)return;
+ if(typeof XLSX==='undefined'){alert('Knižnica pre Excel sa nenačítala.');return}
+ const r=new FileReader();
+ r.onload=()=>{try{
+  const wb=XLSX.read(r.result,{type:'array',cellDates:true}),rd=n=>wb.Sheets[n]?XLSX.utils.sheet_to_json(wb.Sheets[n],{defval:''}):[];
+  const D=v=>{if(v instanceof Date)return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;const s=String(v).trim();let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);if(m)return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;m=s.match(/^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})/);return m?`${m[3]}-${pad(m[2])}-${pad(m[1])}`:today};
+  const T=v=>String(v).trim().toLowerCase().startsWith('p')?'in':'out',C=(c,t)=>CATS[t].includes(c)?c:CATS[t][CATS[t].length-1];
+  const items=rd('Pravidelné').filter(x=>x['Názov']&&num(x['Suma'])>0).map(x=>{const t=T(x['Typ']);return{id:uid(),name:String(x['Názov']),type:t,cat:C(x['Kategória'],t),amt:num(x['Suma']),freq:FQR[String(x['Frekvencia']).trim()]||'monthly',date:D(x['Prvý dátum'])}});
+  const tx=rd('Skutočnosť').filter(x=>x['Popis']&&num(x['Suma'])>0).map(x=>{const t=T(x['Typ']);return{id:uid(),name:String(x['Popis']),type:t,cat:C(x['Kategória'],t),amt:num(x['Suma']),date:D(x['Dátum']),card:String(x['Karta']||'')}});
+  const st=rd('Nastavenia')[0],bal=st?num(st['Hodnota']):S.bal;
+  if(!confirm(`Načítať ${items.length} pravidelných položiek a ${tx.length} platieb? Súčasné dáta sa nahradia.`)){inp.value='';return}
+  const cards=rd('Karty').filter(x=>x['Názov']).map(x=>({id:uid(),name:String(x['Názov']),limit:num(x['Limit']),stmt:num(x['Deň výpisu'])||1,due:num(x['Deň splatnosti'])||1,debt0:num(x['Počiatočný dlh'])}));
+  const pays=rd('Splátky kariet').map(x=>({c:cards.find(k=>k.name===String(x['Karta'])),x})).filter(o=>o.c&&num(o.x['Suma'])>0).map(o=>({id:uid(),card:o.c.id,date:D(o.x['Dátum']),amt:num(o.x['Suma'])}));
+  tx.forEach(t=>{const c=cards.find(k=>k.name===t.card);t.card=c?c.id:''});
+  S={bal,items,tx,cards,pays};save();tab='ov';render();
+ }catch(e){alert('Súbor sa nepodarilo načítať.')}};
+ r.readAsArrayBuffer(f);
+}
+const ymd=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const dayOf=(y,m,d)=>new Date(y,m,Math.min(d,new Date(y,m+1,0).getDate()));
+const td=new Date(cy,cm,now.getDate());
+const cardIn=c=>S.tx.filter(t=>t.card===c.id),cardPays=c=>S.pays.filter(p=>p.card===c.id);
+const cardDebt=c=>c.debt0+cardIn(c).reduce((a,t)=>a+t.amt,0)-cardPays(c).reduce((a,p)=>a+p.amt,0);
+function cardInfo(c){
+ let st=dayOf(cy,cm,c.stmt);if(st>td)st=dayOf(cy,cm-1,c.stmt);
+ let du=dayOf(st.getFullYear(),st.getMonth(),c.due);if(du<=st)du=dayOf(st.getFullYear(),st.getMonth()+1,c.due);
+ const stmtAmt=Math.max(0,c.debt0+cardIn(c).filter(t=>t.date<=ymd(st)).reduce((a,t)=>a+t.amt,0)-cardPays(c).reduce((a,p)=>a+p.amt,0));
+ return{st,du,stmtAmt,debt:cardDebt(c)};
+}
+function vCard(){
+ const fd=d=>`${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+ const cs=S.cards.map(c=>{const i=cardInfo(c),pct=c.limit>0?Math.min(100,Math.round(i.debt/c.limit*100)):0,over=i.du<td&&i.stmtAmt>0,open=i.du>=td&&i.stmtAmt>0,newer=Math.max(0,i.debt-i.stmtAmt);
+  return`<div class="card"><div style="display:flex;justify-content:space-between"><b>💳 ${esc(c.name)}</b><button class="x" onclick="delCard('${c.id}')">✕</button></div>
+  <p style="margin:6px 0">Dlh: <b class="${i.debt>0?'out':''}">${fmt2(i.debt)}</b> z limitu ${fmt(c.limit)} · voľný limit ${fmt(c.limit-i.debt)}</p>
+  <div style="height:8px;background:var(--ln);border-radius:4px"><div style="height:8px;width:${pct}%;background:${pct>80?'var(--out)':'var(--ac)'};border-radius:4px"></div></div>
+  <p class="mut" style="margin:8px 0">Posledný výpis ${fd(i.st)}: ≈ ${fmt2(i.stmtAmt)} · splatnosť ${fd(i.du)}${over?' <b class="out">po termíne</b>':''}${i.stmtAmt===0?' (vyrovnané)':''}<br>Nákupy od výpisu (pôjdu na ďalší výpis): ${fmt2(newer)}</p>
+  <div class="form"><input id="pay_${c.id}" type="number" step="0.01" value="${i.stmtAmt>0?i.stmtAmt.toFixed(2):''}" placeholder="Suma splátky €"><button class="btn" onclick="payCard('${c.id}')">Zaznamenať splátku</button>${open?`<button class="btn g" onclick="cardPlan('${c.id}')">Pridať do plánu</button>`:''}</div></div>`}).join('');
+ const tot=S.cards.reduce((a,c)=>a+cardDebt(c),0);
+ const pays=S.pays.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(p=>{const c=S.cards.find(x=>x.id===p.card);return`<tr><td>${p.date.split('-').reverse().join('.')}</td><td style="text-align:left">${c?esc(c.name):'?'}</td><td class="out">−${fmt2(p.amt)}</td><td><button class="x" onclick="delPay('${p.id}')">✕</button></td></tr>`}).join('');
+ return`${S.cards.length?`<div class="card"><div class="mut">Dlh na kartách spolu</div><b class="${tot>0?'out':''}" style="font-size:20px">${fmt2(tot)}</b><div class="mut" style="margin-top:6px">Zostatok z Prehľadu − dlh na kartách: <b>${fmt2(S.bal-tot)}</b></div></div>`:''}${cs}
+ <div class="card"><b>Nová karta</b><div class="form" style="margin-top:8px"><input id="k_n" placeholder="Názov karty"><input id="k_l" type="number" placeholder="Limit €"><input id="k_s" type="number" min="1" max="31" placeholder="Deň výpisu (1–31)"><input id="k_d" type="number" min="1" max="31" placeholder="Deň splatnosti (1–31)"><input id="k_o" type="number" step="0.01" placeholder="Súčasný dlh €"></div>
+ <p class="mut" style="margin:8px 0">Nákupy kartou zapisuj v záložke Skutočnosť výberom karty. Dlh = súčasný dlh + nákupy − splátky. Suma na výpise je približná. Ak už máš nákupy v pláne podľa kategórií, tlačidlo Pridať do plánu nepoužívaj, aby sa výdavok nezapočítal dvakrát.</p><button class="btn" onclick="addCard()">Pridať kartu</button></div>
+ ${pays?`<h2>Posledné splátky</h2><div class="card sc"><table><tbody>${pays}</tbody></table></div>`:''}`;
+}
+function addCard(){const n=$('#k_n').value.trim();if(!n)return;const dd=v=>Math.min(31,Math.max(1,Math.round(num(v))||1));
+ S.cards.push({id:uid(),name:n,limit:num($('#k_l').value),stmt:dd($('#k_s').value),due:dd($('#k_d').value),debt0:num($('#k_o').value)});save();render()}
+function delCard(id){if(!confirm('Zmazať kartu aj jej splátky?'))return;S.cards=S.cards.filter(c=>c.id!==id);S.pays=S.pays.filter(p=>p.card!==id);S.tx.forEach(t=>{if(t.card===id)t.card=''});save();render()}
+function payCard(id){const a=num($('#pay_'+id).value);if(a<=0)return;S.pays.push({id:uid(),card:id,date:today,amt:a});save();render()}
+function delPay(id){S.pays=S.pays.filter(p=>p.id!==id);save();render()}
+function cardPlan(id){const c=S.cards.find(x=>x.id===id);if(!c)return;const i=cardInfo(c);S.items.push({id:uid(),name:'Splátka karty '+c.name,type:'out',cat:'Splátky úverov',amt:Math.round(i.stmtAmt*100)/100,freq:'once',date:ymd(i.du)});save();tab='pl';render()}
+function render(){
+ const T=[['ov','Prehľad'],['pl','Pravidelné'],['ac','Skutočnosť'],['ca','Karty'],['se','Záloha']];
+ $('#nav').innerHTML=T.map(([k,v])=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${v}</button>`).join('');
+ $('#v').innerHTML={ov:vOv,pl:vPlan,ac:vAct,ca:vCard,se:vSet}[tab]();
+}
+render();
+</script></body></html>
