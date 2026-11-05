@@ -33,7 +33,7 @@ enum class BudgetTab(val label: String) {
     PLAN("Pravidelné"),
     ACTUAL("Skutočnosť"),
     CARDS("Karty"),
-    BACKUP("Záloha")
+    SETTINGS("Nastavenia")
 }
 
 class BudgetViewModel(application: Application) : AndroidViewModel(application) {
@@ -69,6 +69,9 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     // Data streams from Room
     val initialBalance: StateFlow<Double> = repository.initialBalance
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val initialBalanceDate: StateFlow<String> = repository.initialBalanceDate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     val budgetItems: StateFlow<List<BudgetItem>> = repository.budgetItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -169,9 +172,10 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // User Actions
-    fun updateInitialBalance(balance: Double) {
+    fun updateInitialBalance(balance: Double, date: String = "") {
         viewModelScope.launch {
-            repository.setInitialBalance(balance)
+            repository.setInitialBalance(balance, date)
+            _userMessage.value = "Počiatočný zostatok bol uložený."
         }
     }
 
@@ -199,9 +203,35 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateBudgetItem(
+        id: String,
+        name: String,
+        type: String,
+        category: String,
+        amount: Double,
+        frequency: String,
+        startDate: String
+    ) {
+        if (name.isBlank() || amount <= 0) return
+        viewModelScope.launch {
+            val item = BudgetItem(
+                id = id,
+                name = name.trim(),
+                type = type,
+                category = category,
+                amount = amount,
+                frequency = frequency,
+                startDate = startDate
+            )
+            repository.updateBudgetItem(item)
+            _userMessage.value = "Položka '${item.name}' bola upravená."
+        }
+    }
+
     fun deleteBudgetItem(id: String) {
         viewModelScope.launch {
             repository.deleteBudgetItem(id)
+            _userMessage.value = "Položka bola vymazaná."
         }
     }
 

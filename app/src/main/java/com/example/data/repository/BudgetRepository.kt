@@ -25,6 +25,9 @@ class BudgetRepository(private val dao: BudgetDao) {
     val initialBalance: Flow<Double> = dao.getConfigFlow("initial_balance")
         .map { entity -> entity?.value?.toDoubleOrNull() ?: 0.0 }
 
+    val initialBalanceDate: Flow<String> = dao.getConfigFlow("initial_balance_date")
+        .map { entity -> entity?.value ?: "" }
+
     val budgetItems: Flow<List<BudgetItem>> = dao.getAllBudgetItems()
         .map { list -> list.map { it.toDomain() } }
 
@@ -37,11 +40,18 @@ class BudgetRepository(private val dao: BudgetDao) {
     val cardPayments: Flow<List<CardPayment>> = dao.getAllCardPayments()
         .map { list -> list.map { it.toDomain() } }
 
-    suspend fun setInitialBalance(balance: Double) {
+    suspend fun setInitialBalance(balance: Double, date: String = "") {
         dao.setConfig(ConfigEntity("initial_balance", balance.toString()))
+        if (date.isNotBlank()) {
+            dao.setConfig(ConfigEntity("initial_balance_date", date))
+        }
     }
 
     suspend fun addBudgetItem(item: BudgetItem) {
+        dao.insertBudgetItem(BudgetItemEntity.fromDomain(item))
+    }
+
+    suspend fun updateBudgetItem(item: BudgetItem) {
         dao.insertBudgetItem(BudgetItemEntity.fromDomain(item))
     }
 
@@ -110,6 +120,7 @@ class BudgetRepository(private val dao: BudgetDao) {
 
     suspend fun exportJson(): String {
         val bal = dao.getConfig("initial_balance")?.value?.toDoubleOrNull() ?: 0.0
+        val balDate = dao.getConfig("initial_balance_date")?.value ?: ""
         val items = dao.getAllBudgetItemsDirect()
         val txs = dao.getAllTransactionsDirect()
         val cards = dao.getAllCreditCardsDirect()
@@ -117,6 +128,9 @@ class BudgetRepository(private val dao: BudgetDao) {
 
         val root = JSONObject()
         root.put("bal", bal)
+        if (balDate.isNotBlank()) {
+            root.put("balDate", balDate)
+        }
 
         val itemsArr = JSONArray()
         for (item in items) {
@@ -177,6 +191,7 @@ class BudgetRepository(private val dao: BudgetDao) {
         return try {
             val root = JSONObject(jsonString)
             val bal = root.optDouble("bal", 0.0)
+            val balDate = root.optString("balDate", "")
 
             val itemsList = mutableListOf<BudgetItemEntity>()
             val itemsArr = root.optJSONArray("items")
@@ -252,6 +267,7 @@ class BudgetRepository(private val dao: BudgetDao) {
 
             dao.replaceFullData(
                 initialBalance = bal,
+                initialBalanceDate = balDate,
                 items = itemsList,
                 transactions = txList,
                 cards = cardList,

@@ -312,18 +312,13 @@ fun QuickAddTransactionDialog(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Date
-            OutlinedTextField(
-                value = dateText,
-                onValueChange = { dateText = it },
-                label = { Text("Dátum (RRRR-MM-DD)") },
-                leadingIcon = {
-                    Icon(Icons.Default.DateRange, contentDescription = null)
-                },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("quick_add_date_input")
+            // Date picker
+            ClickableDateField(
+                label = "Dátum platby",
+                dateValue = dateText,
+                onDateSelected = { dateText = it },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "quick_add_date_input"
             )
 
             // Credit Card selector (only for expenses if cards exist)

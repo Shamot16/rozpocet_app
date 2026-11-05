@@ -1,11 +1,13 @@
-package com.example.ui.backup
+package com.example.ui.settings
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,14 +18,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteForever
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Euro
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -44,15 +50,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.data.model.BudgetConstants
+import com.example.ui.components.ClickableDateField
 import com.example.ui.theme.ExpenseRed
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
-fun BackupScreen(
+fun SettingsScreen(
+    initialBalance: Double,
+    initialBalanceDate: String,
+    onSaveInitialBalance: (Double, String) -> Unit,
     onExportJson: suspend () -> String,
     onImportJson: (String, (Boolean, String) -> Unit) -> Unit,
     onLoadDemo: () -> Unit,
@@ -61,10 +77,23 @@ fun BackupScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val today = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) }
+
+    var balanceInput by remember(initialBalance) {
+        mutableStateOf(
+            if (initialBalance != 0.0) {
+                if (initialBalance % 1.0 == 0.0) initialBalance.toLong().toString() else initialBalance.toString()
+            } else ""
+        )
+    }
+    var balanceDate by remember(initialBalanceDate) {
+        mutableStateOf(if (initialBalanceDate.isNotBlank()) initialBalanceDate else today)
+    }
 
     var manualJsonText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var showConfirmDelete by remember { mutableStateOf(false) }
+    var showConfirmDemoDialog by remember { mutableStateOf(false) }
 
     // SAF Document Creators and Openers
     val createDocLauncher = rememberLauncherForActivityResult(
@@ -107,7 +136,7 @@ fun BackupScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .testTag("backup_screen"),
+            .testTag("settings_screen"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -129,7 +158,107 @@ fun BackupScreen(
             }
         }
 
-        // 1. Google Drive / Android File Backup & Export
+        // 1. Initial Balance & Date Settings Card (Moved to Settings as requested)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_initial_balance_card")
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.AccountBalanceWallet,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Počiatočný stav financií",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Hotovosť + bežné účty k zvolenému dátumu",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "Tento počiatočný stav slúži ako štartovací bod pre 12-mesačnú prognózu a denný harmonogram cashflow.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Balance Amount Field
+                    OutlinedTextField(
+                        value = balanceInput,
+                        onValueChange = { balanceInput = it.replace(',', '.') },
+                        label = { Text("Počiatočný zostatok v €") },
+                        leadingIcon = { Icon(Icons.Default.Euro, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_balance_amount_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Date Field with Calendar Picker
+                    ClickableDateField(
+                        label = "Platné k dátumu",
+                        dateValue = balanceDate,
+                        onDateSelected = { balanceDate = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "settings_balance_date_input"
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            val parsed = balanceInput.toDoubleOrNull() ?: 0.0
+                            onSaveInitialBalance(parsed, balanceDate)
+                            statusMessage = "Počiatočný zostatok ${BudgetConstants.formatCurrency(parsed)} k dátumu $balanceDate bol úspešne uložený."
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("settings_save_balance_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Uložiť počiatočný zostatok", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 2. Google Drive / Android File Backup & Export
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -165,7 +294,9 @@ fun BackupScreen(
                             onClick = {
                                 createDocLauncher.launch("rodinny-rozpocet-zaloha.json")
                             },
-                            modifier = Modifier.weight(1f).testTag("save_to_drive_button")
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("save_to_drive_button")
                         ) {
                             Icon(Icons.Default.CloudUpload, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
@@ -195,7 +326,7 @@ fun BackupScreen(
             }
         }
 
-        // 2. Import & Restore from Google Drive / file
+        // 3. Import & Restore from Google Drive / file
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -227,7 +358,9 @@ fun BackupScreen(
                         onClick = {
                             openDocLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                         },
-                        modifier = Modifier.fillMaxWidth().testTag("open_file_button")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("open_file_button")
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
@@ -266,7 +399,9 @@ fun BackupScreen(
                             }
                         },
                         enabled = manualJsonText.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth().testTag("apply_manual_json_button")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("apply_manual_json_button")
                     ) {
                         Text("Obnoviť rozpočet z textu zálohy")
                     }
@@ -274,7 +409,7 @@ fun BackupScreen(
             }
         }
 
-        // 3. Demo Data and Reset
+        // 4. Demo Data and Reset
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -293,12 +428,14 @@ fun BackupScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedButton(
-                        onClick = onLoadDemo,
-                        modifier = Modifier.fillMaxWidth().testTag("load_demo_button")
+                        onClick = { showConfirmDemoDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("load_demo_button")
                     ) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Načítať ukážkové dáta z pôvodnej aplikácie")
+                        Text("Načítať ukážkové dáta")
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -306,7 +443,9 @@ fun BackupScreen(
                     OutlinedButton(
                         onClick = { showConfirmDelete = true },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = ExpenseRed),
-                        modifier = Modifier.fillMaxWidth().testTag("clear_all_button")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("clear_all_button")
                     ) {
                         Icon(Icons.Default.DeleteForever, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
@@ -319,6 +458,29 @@ fun BackupScreen(
         item {
             Spacer(modifier = Modifier.height(30.dp))
         }
+    }
+
+    if (showConfirmDemoDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDemoDialog = false },
+            title = { Text("Načítať ukážkové dáta?") },
+            text = { Text("Naozaj chcete prepísať existujúce dáta v aplikácii ukážkovými testovacími dátami?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onLoadDemo()
+                        showConfirmDemoDialog = false
+                    }
+                ) {
+                    Text("Prepísať a načítať", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDemoDialog = false }) {
+                    Text("Zrušiť")
+                }
+            }
+        )
     }
 
     if (showConfirmDelete) {

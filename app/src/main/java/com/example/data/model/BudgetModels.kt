@@ -147,8 +147,6 @@ object BudgetConstants {
     }
 
     fun formatCurrencyNoDecimals(amount: Double): String {
-        val format = NumberFormat.getCurrencyInstance(slovakLocale)
-        format.maximumFractionDigits = 0
-        return format.format(amount)
+        return formatCurrency(amount)
     }
 }

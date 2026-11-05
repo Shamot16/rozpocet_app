@@ -10,7 +10,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -33,11 +33,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.actual.ActualScreen
-import com.example.ui.backup.BackupScreen
 import com.example.ui.cards.CardsScreen
 import com.example.ui.components.QuickAddTransactionDialog
 import com.example.ui.overview.OverviewScreen
 import com.example.ui.plan.PlanScreen
+import com.example.ui.settings.SettingsScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +47,7 @@ fun MainApp(
 ) {
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val initialBalance by viewModel.initialBalance.collectAsStateWithLifecycle()
+    val initialBalanceDate by viewModel.initialBalanceDate.collectAsStateWithLifecycle()
     val forecast by viewModel.forecast.collectAsStateWithLifecycle()
     val selectedMonthIndex by viewModel.selectedOverviewMonthIndex.collectAsStateWithLifecycle()
     val dailySchedule by viewModel.selectedDailySchedule.collectAsStateWithLifecycle()
@@ -127,11 +128,11 @@ fun MainApp(
                     modifier = Modifier.testTag("nav_tab_cards")
                 )
                 NavigationBarItem(
-                    selected = currentTab == BudgetTab.BACKUP,
-                    onClick = { viewModel.selectTab(BudgetTab.BACKUP) },
-                    icon = { Icon(Icons.Default.SettingsBackupRestore, contentDescription = "Záloha") },
-                    label = { Text("Záloha") },
-                    modifier = Modifier.testTag("nav_tab_backup")
+                    selected = currentTab == BudgetTab.SETTINGS,
+                    onClick = { viewModel.selectTab(BudgetTab.SETTINGS) },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "Nastavenia") },
+                    label = { Text("Nastavenia") },
+                    modifier = Modifier.testTag("nav_tab_settings")
                 )
             }
         },
@@ -157,12 +158,13 @@ fun MainApp(
                 BudgetTab.OVERVIEW -> {
                     OverviewScreen(
                         initialBalance = initialBalance,
+                        initialBalanceDate = initialBalanceDate,
                         forecast = forecast,
                         selectedMonthIndex = selectedMonthIndex,
                         dailySchedule = dailySchedule,
                         cardsSummary = cardsSummary,
                         deficitWarning = deficitWarning,
-                        onUpdateInitialBalance = { viewModel.updateInitialBalance(it) },
+                        onNavigateToSettings = { viewModel.selectTab(BudgetTab.SETTINGS) },
                         onSelectMonthIndex = { viewModel.selectOverviewMonth(it) },
                         onNavigateToCards = { viewModel.selectTab(BudgetTab.CARDS) }
                     )
@@ -172,8 +174,8 @@ fun MainApp(
                     PlanScreen(
                         items = budgetItems,
                         onAddItem = { n, t, c, a, f, d -> viewModel.addBudgetItem(n, t, c, a, f, d) },
-                        onDeleteItem = { viewModel.deleteBudgetItem(it) },
-                        onLoadDemo = { viewModel.loadDemoData() }
+                        onUpdateItem = { id, n, t, c, a, f, d -> viewModel.updateBudgetItem(id, n, t, c, a, f, d) },
+                        onDeleteItem = { viewModel.deleteBudgetItem(it) }
                     )
                 }
 
@@ -184,7 +186,7 @@ fun MainApp(
                         planVsActual = planVsActual,
                         transactions = actualTransactions,
                         onSelectMonth = { viewModel.setSelectedActualMonth(it) },
-                        onAddTransaction = { n, t, c, a, d, k -> viewModel.addTransaction(n, t, c, a, d, k) },
+                        onOpenAddTransaction = { viewModel.setShowQuickAddDialog(true) },
                         onDeleteTransaction = { viewModel.deleteTransaction(it) }
                     )
                 }
@@ -201,8 +203,11 @@ fun MainApp(
                     )
                 }
 
-                BudgetTab.BACKUP -> {
-                    BackupScreen(
+                BudgetTab.SETTINGS -> {
+                    SettingsScreen(
+                        initialBalance = initialBalance,
+                        initialBalanceDate = initialBalanceDate,
+                        onSaveInitialBalance = { bal, date -> viewModel.updateInitialBalance(bal, date) },
                         onExportJson = { viewModel.getExportJsonString() },
                         onImportJson = { json, cb -> viewModel.importJsonData(json, cb) },
                         onLoadDemo = { viewModel.loadDemoData() },

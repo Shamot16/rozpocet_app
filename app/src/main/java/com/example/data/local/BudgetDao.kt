@@ -118,12 +118,14 @@ interface BudgetDao {
         clearCreditCards()
         clearCardPayments()
         setConfig(ConfigEntity("initial_balance", "0.0"))
+        setConfig(ConfigEntity("initial_balance_date", ""))
     }
 
     // Import replace dataset
     @Transaction
     suspend fun replaceFullData(
         initialBalance: Double,
+        initialBalanceDate: String = "",
         items: List<BudgetItemEntity>,
         transactions: List<TransactionEntity>,
         cards: List<CreditCardEntity>,
@@ -131,6 +133,9 @@ interface BudgetDao {
     ) {
         clearAllData()
         setConfig(ConfigEntity("initial_balance", initialBalance.toString()))
+        if (initialBalanceDate.isNotBlank()) {
+            setConfig(ConfigEntity("initial_balance_date", initialBalanceDate))
+        }
         insertBudgetItems(items)
         insertTransactions(transactions)
         insertCreditCards(cards)

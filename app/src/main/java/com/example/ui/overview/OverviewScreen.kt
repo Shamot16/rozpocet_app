@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
@@ -36,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -66,19 +68,17 @@ import com.example.ui.theme.WarningOrange
 @Composable
 fun OverviewScreen(
     initialBalance: Double,
+    initialBalanceDate: String,
     forecast: List<MonthForecast>,
     selectedMonthIndex: Int,
     dailySchedule: List<CashflowDayEntry>,
     cardsSummary: CardsExecutiveSummary,
     deficitWarning: String?,
-    onUpdateInitialBalance: (Double) -> Unit,
+    onNavigateToSettings: () -> Unit,
     onSelectMonthIndex: (Int) -> Unit,
     onNavigateToCards: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isEditingBalance by remember { mutableStateOf(false) }
-    var balanceInput by remember(initialBalance) { mutableStateOf(initialBalance.toString()) }
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -127,72 +127,36 @@ fun OverviewScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "Všetky účty + hotovosť",
+                                    text = if (initialBalanceDate.isNotBlank()) "Platný k $initialBalanceDate" else "Všetky účty + hotovosť",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                 )
                             }
                         }
 
-                        IconButton(
-                            onClick = { isEditingBalance = !isEditingBalance },
+                        OutlinedButton(
+                            onClick = onNavigateToSettings,
                             modifier = Modifier.testTag("edit_balance_button")
                         ) {
                             Icon(
-                                Icons.Default.Edit,
-                                contentDescription = "Upraviť zostatok",
-                                tint = MaterialTheme.colorScheme.primary
+                                Icons.Default.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Nastaviť")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    if (isEditingBalance) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = balanceInput,
-                                onValueChange = { balanceInput = it.replace(',', '.') },
-                                keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Decimal,
-                                    imeAction = ImeAction.Done
-                                ),
-                                keyboardActions = KeyboardActions(
-                                    onDone = {
-                                        val num = balanceInput.toDoubleOrNull() ?: 0.0
-                                        onUpdateInitialBalance(num)
-                                        isEditingBalance = false
-                                    }
-                                ),
-                                singleLine = true,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("initial_balance_input")
-                            )
-                            TextButton(
-                                onClick = {
-                                    val num = balanceInput.toDoubleOrNull() ?: 0.0
-                                    onUpdateInitialBalance(num)
-                                    isEditingBalance = false
-                                },
-                                modifier = Modifier.testTag("save_balance_button")
-                            ) {
-                                Text("Uložiť", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = BudgetConstants.formatCurrency(initialBalance),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (initialBalance < 0) ExpenseRed else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.testTag("initial_balance_display")
-                        )
-                    }
+                    Text(
+                        text = BudgetConstants.formatCurrency(initialBalance),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (initialBalance < 0) ExpenseRed else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.testTag("initial_balance_display")
+                    )
                 }
             }
         }
@@ -457,19 +421,19 @@ fun OverviewScreen(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                 )
                                 Text(
-                                    text = BudgetConstants.formatCurrencyNoDecimals(m.income),
+                                    text = BudgetConstants.formatCurrency(m.income),
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = IncomeGreen
                                 )
                                 Text(
-                                    text = BudgetConstants.formatCurrencyNoDecimals(m.expense),
+                                    text = BudgetConstants.formatCurrency(m.expense),
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ExpenseRed
                                 )
                                 Text(
-                                    text = BudgetConstants.formatCurrencyNoDecimals(m.balance),
+                                    text = BudgetConstants.formatCurrency(m.balance),
                                     modifier = Modifier.weight(1.2f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
