@@ -369,6 +369,10 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         return repository.exportJson()
     }
 
+    suspend fun getExportXlsxBytes(): ByteArray {
+        return repository.exportXlsxBytes()
+    }
+
     fun importJsonData(jsonString: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val result = repository.importJson(jsonString)

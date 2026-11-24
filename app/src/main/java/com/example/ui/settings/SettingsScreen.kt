@@ -31,17 +31,20 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Euro
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,7 +62,10 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.BudgetConstants
 import com.example.ui.components.ClickableDateField
 import com.example.ui.theme.ExpenseRed
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -70,6 +76,7 @@ fun SettingsScreen(
     initialBalanceDate: String,
     onSaveInitialBalance: (Double, String) -> Unit,
     onExportJson: suspend () -> String,
+    onExportExcel: suspend () -> ByteArray,
     onImportJson: (String, (Boolean, String) -> Unit) -> Unit,
     onLoadDemo: () -> Unit,
     onClearAll: () -> Unit,
@@ -109,6 +116,26 @@ fun SettingsScreen(
                     statusMessage = "Záloha bola úspešne uložená do súboru."
                 } catch (e: Exception) {
                     statusMessage = "Chyba pri ukladaní: ${e.localizedMessage}"
+                }
+            }
+        }
+    }
+
+    val createExcelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val xlsxBytes = withContext(Dispatchers.IO) { onExportExcel() }
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { os ->
+                            os.write(xlsxBytes)
+                        }
+                    }
+                    statusMessage = "Excel export (.xlsx) bol úspešne uložený do súboru."
+                } catch (e: Exception) {
+                    statusMessage = "Chyba pri ukladaní Excelu: ${e.localizedMessage}"
                 }
             }
         }
@@ -316,6 +343,80 @@ fun SettingsScreen(
                                 }
                             },
                             modifier = Modifier.testTag("share_backup_button")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Zdieľať")
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 14.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    Text(
+                        text = "Export tabuliek do Excelu (.xlsx)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Vytvorí prehľadný Excel zošit s hárkami pre Prehľad a prognózu, Skutočné platby, Pravidelné položky, Kreditné karty aj Splátky.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                createExcelLauncher.launch("rodinny-rozpocet-export.xlsx")
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("export_excel_button")
+                        ) {
+                            Icon(Icons.Default.TableChart, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Export do Excelu (.xlsx)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        val shareUri = withContext(Dispatchers.IO) {
+                                            val xlsxBytes = onExportExcel()
+                                            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                            val exportFile = File(exportDir, "rodinny-rozpocet-export.xlsx")
+                                            exportFile.writeBytes(xlsxBytes)
+                                            FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                exportFile
+                                            )
+                                        }
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                            putExtra(Intent.EXTRA_SUBJECT, "Rodinný rozpočet – Export do Excelu")
+                                            putExtra(Intent.EXTRA_STREAM, shareUri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "Zdieľať Excel súbor"))
+                                    } catch (e: Exception) {
+                                        statusMessage = "Chyba pri zdieľaní Excelu: ${e.localizedMessage}"
+                                    }
+                                }
+                            },
+                            modifier = Modifier.testTag("share_excel_button")
                         ) {
                             Icon(Icons.Default.Share, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))

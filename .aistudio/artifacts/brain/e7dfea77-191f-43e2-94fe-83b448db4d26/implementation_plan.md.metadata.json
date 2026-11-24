@@ -1,6 +1,0 @@
-{
-  "summary": "Aktualizovaný plán implementácie Android aplikácie Rodinný rozpočet: plne lokálne úložisko (Room SQLite) bez nutnosti prihlasovania do Google účtu, maximálne súkromie, export/import zálohy priamo na Google Disk alebo cez zdieľanie, a integrácia stavu kreditných kariet priamo v Prehľade.",
-  "updatedAt": "2026-11-05T08:30:09.868455580Z",
-  "requestFeedback": true,
-  "userFacing": true
-}

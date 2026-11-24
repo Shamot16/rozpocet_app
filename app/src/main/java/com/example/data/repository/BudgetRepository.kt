@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.data.export.ExcelExporter
 import com.example.data.local.BudgetDao
 import com.example.data.local.BudgetItemEntity
 import com.example.data.local.CardPaymentEntity
@@ -10,6 +11,7 @@ import com.example.data.model.BudgetItem
 import com.example.data.model.CardPayment
 import com.example.data.model.CreditCard
 import com.example.data.model.Transaction
+import com.example.domain.BudgetEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -185,6 +187,40 @@ class BudgetRepository(private val dao: BudgetDao) {
         root.put("pays", paysArr)
 
         return root.toString(2)
+    }
+
+    suspend fun exportXlsxBytes(): ByteArray {
+        val bal = dao.getConfig("initial_balance")?.value?.toDoubleOrNull() ?: 0.0
+        val balDate = dao.getConfig("initial_balance_date")?.value ?: ""
+        val items = dao.getAllBudgetItemsDirect().map { it.toDomain() }
+        val txs = dao.getAllTransactionsDirect().map { it.toDomain() }
+        val cards = dao.getAllCreditCardsDirect().map { it.toDomain() }
+        val pays = dao.getAllCardPaymentsDirect().map { it.toDomain() }
+
+        val cal = Calendar.getInstance()
+        val forecast = BudgetEngine.compute12MonthForecast(
+            initialBalance = bal,
+            items = items,
+            currentYear = cal.get(Calendar.YEAR),
+            currentMonth = cal.get(Calendar.MONTH)
+        )
+        val cardsSummary = BudgetEngine.computeCardsExecutiveSummary(
+            initialCashBalance = bal,
+            cards = cards,
+            transactions = txs,
+            payments = pays
+        )
+
+        return ExcelExporter.buildWorkbookBytes(
+            initialBalance = bal,
+            initialBalanceDate = balDate,
+            forecast = forecast,
+            cardsSummary = cardsSummary,
+            items = items,
+            transactions = txs,
+            cards = cards,
+            cardPayments = pays
+        )
     }
 
     suspend fun importJson(jsonString: String): Result<Int> {

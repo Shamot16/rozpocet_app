@@ -209,6 +209,7 @@ fun MainApp(
                         initialBalanceDate = initialBalanceDate,
                         onSaveInitialBalance = { bal, date -> viewModel.updateInitialBalance(bal, date) },
                         onExportJson = { viewModel.getExportJsonString() },
+                        onExportExcel = { viewModel.getExportXlsxBytes() },
                         onImportJson = { json, cb -> viewModel.importJsonData(json, cb) },
                         onLoadDemo = { viewModel.loadDemoData() },
                         onClearAll = { viewModel.clearAllData() }
