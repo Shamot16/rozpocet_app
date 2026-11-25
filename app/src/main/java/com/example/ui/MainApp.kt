@@ -26,7 +26,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.actual.ActualScreen
 import com.example.ui.cards.CardsScreen
+import com.example.ui.components.EkasaReceiptSplitterDialog
 import com.example.ui.components.QuickAddTransactionDialog
 import com.example.ui.overview.OverviewScreen
 import com.example.ui.plan.PlanScreen
@@ -59,9 +62,12 @@ fun MainApp(
     val selectedActualMonth by viewModel.selectedActualMonth.collectAsStateWithLifecycle()
     val planVsActual by viewModel.planVsActual.collectAsStateWithLifecycle()
     val actualTransactions by viewModel.actualMonthTransactions.collectAsStateWithLifecycle()
+    val ekasaReceipts by viewModel.ekasaReceipts.collectAsStateWithLifecycle()
+    val receiptToSplit by viewModel.receiptToSplit.collectAsStateWithLifecycle()
     val showQuickAdd by viewModel.showQuickAddDialog.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
 
+    var isRefetchingInSplitter by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Display user messages via Snackbar
@@ -185,9 +191,13 @@ fun MainApp(
                         selectedMonth = selectedActualMonth,
                         planVsActual = planVsActual,
                         transactions = actualTransactions,
+                        ekasaReceipts = ekasaReceipts,
                         onSelectMonth = { viewModel.setSelectedActualMonth(it) },
                         onOpenAddTransaction = { viewModel.setShowQuickAddDialog(true) },
-                        onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                        onRefetchEkasaReceipt = { id, cb -> viewModel.refetchEkasaReceipt(id, cb) },
+                        onOpenEkasaSplitter = { rec -> viewModel.openReceiptSplitter(rec) },
+                        onDeleteEkasaReceipt = { id -> viewModel.deleteEkasaReceipt(id) }
                     )
                 }
 
@@ -222,8 +232,36 @@ fun MainApp(
                 QuickAddTransactionDialog(
                     cards = creditCards,
                     onDismiss = { viewModel.setShowQuickAddDialog(false) },
-                    onSave = { n, t, c, a, d, k ->
-                        viewModel.addTransaction(n, t, c, a, d, k)
+                    onSave = { n, t, c, a, d, k, rid ->
+                        viewModel.addTransaction(n, t, c, a, d, k, rid)
+                    },
+                    onRegisterScannedReceipt = { rid ->
+                        viewModel.registerScannedReceipt(rid)
+                    },
+                    onFetchAndSaveReceipt = { rid ->
+                        viewModel.fetchAndSaveEkasaReceipt(rid)
+                    },
+                    onOpenSplitter = { rec ->
+                        viewModel.openReceiptSplitter(rec)
+                    }
+                )
+            }
+
+            // Multi-category eKasa Receipt Item Splitter Sheet
+            receiptToSplit?.let { rec ->
+                EkasaReceiptSplitterDialog(
+                    receipt = rec,
+                    cards = creditCards,
+                    isRefetching = isRefetchingInSplitter,
+                    onRefetch = {
+                        isRefetchingInSplitter = true
+                        viewModel.refetchEkasaReceipt(rec.receiptId) {
+                            isRefetchingInSplitter = false
+                        }
+                    },
+                    onDismiss = { viewModel.openReceiptSplitter(null) },
+                    onSaveBatches = { batches, cardId, date ->
+                        viewModel.saveSplitEkasaBatches(rec, batches, cardId, date)
                     }
                 )
             }

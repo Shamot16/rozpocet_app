@@ -5,6 +5,9 @@ import androidx.room.PrimaryKey
 import com.example.data.model.BudgetItem
 import com.example.data.model.CardPayment
 import com.example.data.model.CreditCard
+import com.example.data.model.EkasaAllocationStatus
+import com.example.data.model.EkasaItemCodec
+import com.example.data.model.SavedEkasaReceipt
 import com.example.data.model.Transaction
 
 @Entity(tableName = "budget_items")
@@ -50,6 +53,7 @@ data class TransactionEntity(
     val amount: Double,
     val date: String,
     val cardId: String = "",
+    val ekasaReceiptId: String = "",
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun toDomain() = Transaction(
@@ -59,7 +63,8 @@ data class TransactionEntity(
         category = category,
         amount = amount,
         date = date,
-        cardId = cardId
+        cardId = cardId,
+        ekasaReceiptId = ekasaReceiptId
     )
 
     companion object {
@@ -70,7 +75,8 @@ data class TransactionEntity(
             category = tx.category,
             amount = tx.amount,
             date = tx.date,
-            cardId = tx.cardId
+            cardId = tx.cardId,
+            ekasaReceiptId = tx.ekasaReceiptId
         )
     }
 }
@@ -136,3 +142,39 @@ data class ConfigEntity(
     @PrimaryKey val key: String,
     val value: String
 )
+
+@Entity(tableName = "ekasa_receipts")
+data class EkasaReceiptEntity(
+    @PrimaryKey val receiptId: String,
+    val organizationName: String,
+    val issueDate: String,
+    val totalPrice: Double,
+    val itemsJson: String,
+    val allocationStatus: String,
+    val lastFetchedAt: Long,
+    val updatedAt: Long
+) {
+    fun toDomain() = SavedEkasaReceipt(
+        receiptId = receiptId,
+        organizationName = organizationName,
+        issueDate = issueDate,
+        totalPrice = totalPrice,
+        items = EkasaItemCodec.decodeItems(itemsJson),
+        allocationStatus = EkasaAllocationStatus.fromString(allocationStatus),
+        lastFetchedAt = lastFetchedAt,
+        updatedAt = updatedAt
+    )
+
+    companion object {
+        fun fromDomain(receipt: SavedEkasaReceipt) = EkasaReceiptEntity(
+            receiptId = receipt.receiptId,
+            organizationName = receipt.organizationName,
+            issueDate = receipt.issueDate,
+            totalPrice = receipt.totalPrice,
+            itemsJson = EkasaItemCodec.encodeItems(receipt.items),
+            allocationStatus = receipt.allocationStatus.name,
+            lastFetchedAt = receipt.lastFetchedAt,
+            updatedAt = receipt.updatedAt
+        )
+    }
+}

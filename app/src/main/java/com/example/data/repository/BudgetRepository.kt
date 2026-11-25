@@ -6,11 +6,17 @@ import com.example.data.local.BudgetItemEntity
 import com.example.data.local.CardPaymentEntity
 import com.example.data.local.ConfigEntity
 import com.example.data.local.CreditCardEntity
+import com.example.data.local.EkasaReceiptEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.model.BudgetItem
 import com.example.data.model.CardPayment
 import com.example.data.model.CreditCard
+import com.example.data.model.EkasaAllocationStatus
+import com.example.data.model.EkasaItemCodec
+import com.example.data.model.SavedEkasaReceipt
+import com.example.data.model.SplitCategoryBatch
 import com.example.data.model.Transaction
+import com.example.data.remote.EkasaReceiptService
 import com.example.domain.BudgetEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -40,6 +46,9 @@ class BudgetRepository(private val dao: BudgetDao) {
         .map { list -> list.map { it.toDomain() } }
 
     val cardPayments: Flow<List<CardPayment>> = dao.getAllCardPayments()
+        .map { list -> list.map { it.toDomain() } }
+
+    val ekasaReceipts: Flow<List<SavedEkasaReceipt>> = dao.getAllEkasaReceipts()
         .map { list -> list.map { it.toDomain() } }
 
     suspend fun setInitialBalance(balance: Double, date: String = "") {
@@ -83,6 +92,167 @@ class BudgetRepository(private val dao: BudgetDao) {
 
     suspend fun deleteCardPayment(id: String) {
         dao.deleteCardPayment(id)
+    }
+
+    suspend fun getEkasaReceipt(receiptId: String): SavedEkasaReceipt? {
+        return dao.getEkasaReceiptById(receiptId)?.toDomain()
+    }
+
+    /**
+     * Immediately persists a scanned QR receiptId if not already saved so the code
+     * is never lost even offline. Returns the existing receipt if already present.
+     */
+    suspend fun registerScannedReceiptId(receiptId: String): SavedEkasaReceipt {
+        val existing = dao.getEkasaReceiptById(receiptId)?.toDomain()
+        if (existing != null) return existing
+
+        val now = System.currentTimeMillis()
+        val placeholder = SavedEkasaReceipt(
+            receiptId = receiptId,
+            organizationName = "eKasa doklad",
+            issueDate = todayStr(),
+            totalPrice = 0.0,
+            items = emptyList(),
+            allocationStatus = EkasaAllocationStatus.SCANNED_ONLY,
+            lastFetchedAt = 0L,
+            updatedAt = now
+        )
+        dao.insertEkasaReceipt(EkasaReceiptEntity.fromDomain(placeholder))
+        return placeholder
+    }
+
+    /**
+     * Fetches receipt metadata + line items from Finančná správa eKasa API
+     * and merges with any existing stored allocations.
+     */
+    suspend fun fetchAndSaveEkasaReceipt(receiptId: String): Result<SavedEkasaReceipt> {
+        val fetchResult = EkasaReceiptService.fetchReceipt(receiptId)
+        return fetchResult.map { fetched ->
+            val existing = dao.getEkasaReceiptById(receiptId)?.toDomain()
+            val mergedItems = EkasaReceiptService.mergeFetchedItemsWithExisting(
+                fetched = fetched.items,
+                existing = existing?.items ?: emptyList()
+            )
+            val newStatus = when {
+                existing?.allocationStatus == EkasaAllocationStatus.FULL -> EkasaAllocationStatus.FULL
+                mergedItems.isNotEmpty() && mergedItems.all { it.assignedCategory.isNotBlank() } -> EkasaAllocationStatus.FULL
+                mergedItems.any { it.assignedCategory.isNotBlank() } -> EkasaAllocationStatus.PARTIAL
+                else -> existing?.allocationStatus ?: EkasaAllocationStatus.SCANNED_ONLY
+            }
+            val now = System.currentTimeMillis()
+            val saved = SavedEkasaReceipt(
+                receiptId = fetched.receiptId,
+                organizationName = fetched.organizationName,
+                issueDate = fetched.formattedDate,
+                totalPrice = fetched.totalPrice,
+                items = mergedItems,
+                allocationStatus = newStatus,
+                lastFetchedAt = now,
+                updatedAt = now
+            )
+            dao.insertEkasaReceipt(EkasaReceiptEntity.fromDomain(saved))
+            saved
+        }
+    }
+
+    /**
+     * Saves a single full transaction for an eKasa receipt and marks the receipt as FULL.
+     */
+    suspend fun saveFullEkasaTransaction(
+        tx: Transaction,
+        receiptId: String,
+        organizationName: String,
+        issueDate: String,
+        totalPrice: Double
+    ) {
+        val existing = dao.getEkasaReceiptById(receiptId)?.toDomain()
+        val now = System.currentTimeMillis()
+        val updatedItems = existing?.items?.map { item ->
+            if (item.assignedCategory.isBlank()) item.copy(assignedCategory = tx.category) else item
+        } ?: emptyList()
+
+        val updatedReceipt = SavedEkasaReceipt(
+            receiptId = receiptId,
+            organizationName = existing?.organizationName?.takeIf { it.isNotBlank() && it != "eKasa doklad" }
+                ?: organizationName.ifBlank { tx.name },
+            issueDate = existing?.issueDate?.ifBlank { issueDate } ?: issueDate,
+            totalPrice = if ((existing?.totalPrice ?: 0.0) > 0.0) existing!!.totalPrice else totalPrice,
+            items = updatedItems,
+            allocationStatus = EkasaAllocationStatus.FULL,
+            lastFetchedAt = existing?.lastFetchedAt ?: now,
+            updatedAt = now
+        )
+        dao.saveSplitReceiptAndTransactions(
+            transactions = listOf(TransactionEntity.fromDomain(tx.copy(ekasaReceiptId = receiptId))),
+            updatedReceipt = EkasaReceiptEntity.fromDomain(updatedReceipt)
+        )
+    }
+
+    /**
+     * Atomically creates one transaction per category batch from a split eKasa receipt
+     * and updates item-level category allocations + overall receipt status (PARTIAL or FULL).
+     */
+    suspend fun saveSplitEkasaBatches(
+        receipt: SavedEkasaReceipt,
+        batches: List<SplitCategoryBatch>,
+        cardId: String,
+        customDate: String
+    ) {
+        if (batches.isEmpty()) return
+
+        val assignedIndexToCategory = mutableMapOf<Int, String>()
+        val txEntities = mutableListOf<TransactionEntity>()
+        val storeLabel = receipt.organizationName.ifBlank { "eKasa nákup" }
+
+        for (batch in batches) {
+            val roundedAmount = Math.round(batch.amount * 100.0) / 100.0
+            if (roundedAmount > 0.0) {
+                txEntities.add(
+                    TransactionEntity.fromDomain(
+                        Transaction(
+                            id = UUID.randomUUID().toString(),
+                            name = "$storeLabel – ${batch.category}",
+                            type = "out",
+                            category = batch.category,
+                            amount = roundedAmount,
+                            date = customDate.ifBlank { receipt.issueDate },
+                            cardId = cardId,
+                            ekasaReceiptId = receipt.receiptId
+                        )
+                    )
+                )
+            }
+            for (idx in batch.itemIndices) {
+                assignedIndexToCategory[idx] = batch.category
+            }
+        }
+
+        val updatedItems = receipt.items.map { item ->
+            val newlyAssigned = assignedIndexToCategory[item.index]
+            if (newlyAssigned != null) {
+                item.copy(assignedCategory = newlyAssigned)
+            } else {
+                item
+            }
+        }
+
+        val allAssigned = updatedItems.isNotEmpty() && updatedItems.all { it.assignedCategory.isNotBlank() }
+        val newStatus = if (allAssigned) EkasaAllocationStatus.FULL else EkasaAllocationStatus.PARTIAL
+
+        val updatedReceipt = receipt.copy(
+            items = updatedItems,
+            allocationStatus = newStatus,
+            updatedAt = System.currentTimeMillis()
+        )
+
+        dao.saveSplitReceiptAndTransactions(
+            transactions = txEntities,
+            updatedReceipt = EkasaReceiptEntity.fromDomain(updatedReceipt)
+        )
+    }
+
+    suspend fun deleteEkasaReceipt(receiptId: String) {
+        dao.deleteEkasaReceipt(receiptId)
     }
 
     suspend fun clearAllData() {
@@ -158,6 +328,9 @@ class BudgetRepository(private val dao: BudgetDao) {
             obj.put("amt", tx.amount)
             obj.put("date", tx.date)
             obj.put("card", tx.cardId)
+            if (tx.ekasaReceiptId.isNotBlank()) {
+                obj.put("ekasaId", tx.ekasaReceiptId)
+            }
             txArr.put(obj)
         }
         root.put("tx", txArr)
@@ -185,6 +358,22 @@ class BudgetRepository(private val dao: BudgetDao) {
             paysArr.put(obj)
         }
         root.put("pays", paysArr)
+
+        val receipts = dao.getAllEkasaReceiptsDirect()
+        val receiptsArr = JSONArray()
+        for (r in receipts) {
+            val obj = JSONObject()
+            obj.put("receiptId", r.receiptId)
+            obj.put("org", r.organizationName)
+            obj.put("date", r.issueDate)
+            obj.put("total", r.totalPrice)
+            obj.put("itemsJson", r.itemsJson)
+            obj.put("status", r.allocationStatus)
+            obj.put("lastFetchedAt", r.lastFetchedAt)
+            obj.put("updatedAt", r.updatedAt)
+            receiptsArr.put(obj)
+        }
+        root.put("ekasaReceipts", receiptsArr)
 
         return root.toString(2)
     }
@@ -261,7 +450,8 @@ class BudgetRepository(private val dao: BudgetDao) {
                             category = obj.optString("cat", "Iné"),
                             amount = obj.optDouble("amt", 0.0),
                             date = obj.optString("date", todayStr()),
-                            cardId = obj.optString("card", "")
+                            cardId = obj.optString("card", ""),
+                            ekasaReceiptId = obj.optString("ekasaId", "")
                         )
                     )
                 }
@@ -301,13 +491,38 @@ class BudgetRepository(private val dao: BudgetDao) {
                 }
             }
 
+            val receiptList = mutableListOf<EkasaReceiptEntity>()
+            val receiptsArr = root.optJSONArray("ekasaReceipts")
+            if (receiptsArr != null) {
+                val now = System.currentTimeMillis()
+                for (i in 0 until receiptsArr.length()) {
+                    val obj = receiptsArr.getJSONObject(i)
+                    val rid = obj.optString("receiptId", "")
+                    if (rid.isNotBlank()) {
+                        receiptList.add(
+                            EkasaReceiptEntity(
+                                receiptId = rid,
+                                organizationName = obj.optString("org", "eKasa doklad"),
+                                issueDate = obj.optString("date", todayStr()),
+                                totalPrice = obj.optDouble("total", 0.0),
+                                itemsJson = obj.optString("itemsJson", "[]"),
+                                allocationStatus = obj.optString("status", EkasaAllocationStatus.SCANNED_ONLY.name),
+                                lastFetchedAt = obj.optLong("lastFetchedAt", now),
+                                updatedAt = obj.optLong("updatedAt", now)
+                            )
+                        )
+                    }
+                }
+            }
+
             dao.replaceFullData(
                 initialBalance = bal,
                 initialBalanceDate = balDate,
                 items = itemsList,
                 transactions = txList,
                 cards = cardList,
-                payments = paysList
+                payments = paysList,
+                ekasaReceipts = receiptList
             )
 
             val totalImported = itemsList.size + txList.size + cardList.size

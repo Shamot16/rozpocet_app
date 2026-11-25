@@ -110,6 +110,37 @@ interface BudgetDao {
         unassignCardFromTransactions(cardId)
     }
 
+    // Saved eKasa Receipts
+    @Query("SELECT * FROM ekasa_receipts ORDER BY updatedAt DESC")
+    fun getAllEkasaReceipts(): Flow<List<EkasaReceiptEntity>>
+
+    @Query("SELECT * FROM ekasa_receipts ORDER BY updatedAt DESC")
+    suspend fun getAllEkasaReceiptsDirect(): List<EkasaReceiptEntity>
+
+    @Query("SELECT * FROM ekasa_receipts WHERE receiptId = :receiptId LIMIT 1")
+    suspend fun getEkasaReceiptById(receiptId: String): EkasaReceiptEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEkasaReceipt(receipt: EkasaReceiptEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEkasaReceipts(receipts: List<EkasaReceiptEntity>)
+
+    @Query("DELETE FROM ekasa_receipts WHERE receiptId = :receiptId")
+    suspend fun deleteEkasaReceipt(receiptId: String)
+
+    @Query("DELETE FROM ekasa_receipts")
+    suspend fun clearEkasaReceipts()
+
+    @Transaction
+    suspend fun saveSplitReceiptAndTransactions(
+        transactions: List<TransactionEntity>,
+        updatedReceipt: EkasaReceiptEntity
+    ) {
+        insertTransactions(transactions)
+        insertEkasaReceipt(updatedReceipt)
+    }
+
     // Reset entire dataset
     @Transaction
     suspend fun clearAllData() {
@@ -117,6 +148,7 @@ interface BudgetDao {
         clearTransactions()
         clearCreditCards()
         clearCardPayments()
+        clearEkasaReceipts()
         setConfig(ConfigEntity("initial_balance", "0.0"))
         setConfig(ConfigEntity("initial_balance_date", ""))
     }
@@ -129,7 +161,8 @@ interface BudgetDao {
         items: List<BudgetItemEntity>,
         transactions: List<TransactionEntity>,
         cards: List<CreditCardEntity>,
-        payments: List<CardPaymentEntity>
+        payments: List<CardPaymentEntity>,
+        ekasaReceipts: List<EkasaReceiptEntity> = emptyList()
     ) {
         clearAllData()
         setConfig(ConfigEntity("initial_balance", initialBalance.toString()))
@@ -140,5 +173,6 @@ interface BudgetDao {
         insertTransactions(transactions)
         insertCreditCards(cards)
         insertCardPayments(payments)
+        insertEkasaReceipts(ekasaReceipts)
     }
 }

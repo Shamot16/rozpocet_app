@@ -1,9 +1,7 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,9 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Euro
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Warning
@@ -50,17 +49,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.model.BudgetConstants
 import com.example.data.model.CreditCard
-import com.example.data.remote.EkasaReceiptService
+import com.example.data.model.EkasaAllocationStatus
+import com.example.data.model.SavedEkasaReceipt
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
+import com.example.ui.theme.WarningOrange
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,7 +70,18 @@ import java.util.Locale
 fun QuickAddTransactionDialog(
     cards: List<CreditCard>,
     onDismiss: () -> Unit,
-    onSave: (name: String, type: String, category: String, amount: Double, date: String, cardId: String) -> Unit
+    onSave: (
+        name: String,
+        type: String,
+        category: String,
+        amount: Double,
+        date: String,
+        cardId: String,
+        ekasaReceiptId: String
+    ) -> Unit,
+    onRegisterScannedReceipt: suspend (receiptId: String) -> SavedEkasaReceipt,
+    onFetchAndSaveReceipt: suspend (receiptId: String) -> Result<SavedEkasaReceipt>,
+    onOpenSplitter: (SavedEkasaReceipt) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
@@ -87,12 +97,16 @@ fun QuickAddTransactionDialog(
     var categoryExpanded by remember { mutableStateOf(false) }
     var cardExpanded by remember { mutableStateOf(false) }
 
-    // Scanner & eKasa loading state
+    // Scanner & eKasa state
     var showScanner by remember { mutableStateOf(false) }
     var isLoadingReceipt by remember { mutableStateOf(false) }
     var scannerErrorMessage by remember { mutableStateOf<String?>(null) }
+    var activeReceipt by remember { mutableStateOf<SavedEkasaReceipt?>(null) }
+    var duplicateFullReceipt by remember { mutableStateOf<SavedEkasaReceipt?>(null) }
+    var duplicateAcknowledged by remember { mutableStateOf(false) }
 
     val categories = if (type == "out") BudgetConstants.ExpenseCategories else BudgetConstants.IncomeCategories
+    val isBlockedByDuplicate = duplicateFullReceipt != null && !duplicateAcknowledged
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -141,6 +155,142 @@ fun QuickAddTransactionDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Naskenovať eKasa bloček", fontWeight = FontWeight.SemiBold)
+            }
+
+            // Duplicate Warning Banner (ONLY shown if the receipt was already FULL saved)
+            AnimatedVisibility(visible = duplicateFullReceipt != null && !duplicateAcknowledged) {
+                duplicateFullReceipt?.let { dup ->
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = ExpenseRed.copy(alpha = 0.12f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .testTag("ekasa_duplicate_warning")
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = ExpenseRed,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Duplicitný eKasa doklad",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ExpenseRed
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Tento doklad (${dup.organizationName}, ${BudgetConstants.formatCurrency(dup.totalPrice)}) už bol predtým plne uložený v spotrebe.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        duplicateFullReceipt = null
+                                        activeReceipt = null
+                                        name = ""
+                                        amountText = ""
+                                    },
+                                    modifier = Modifier.testTag("ekasa_duplicate_cancel")
+                                ) {
+                                    Text("Zrušiť")
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = { duplicateAcknowledged = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed),
+                                    modifier = Modifier.testTag("ekasa_duplicate_continue")
+                                ) {
+                                    Text("Napriek tomu pokračovať")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Partial receipt info banner (NO duplicate warning)
+            AnimatedVisibility(
+                visible = activeReceipt?.allocationStatus == EkasaAllocationStatus.PARTIAL &&
+                    !isBlockedByDuplicate
+            ) {
+                activeReceipt?.let { partial ->
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = WarningOrange.copy(alpha = 0.14f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .testTag("ekasa_partial_info")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = WarningOrange,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Čiastočne rozdelený doklad – zostáva ${partial.unassignedCount} pol. (${BudgetConstants.formatCurrency(partial.remainingAmount)}).",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Split receipt button if items are available
+            AnimatedVisibility(
+                visible = activeReceipt != null && activeReceipt!!.items.isNotEmpty() && !isBlockedByDuplicate
+            ) {
+                activeReceipt?.let { rec ->
+                    Button(
+                        onClick = {
+                            onDismiss()
+                            onOpenSplitter(rec)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .testTag("open_ekasa_splitter_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.CallSplit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Rozdeliť bloček po položkách (${rec.items.size} pol.)",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             // Loading indicator for eKasa API request
@@ -222,7 +372,9 @@ fun QuickAddTransactionDialog(
                         selectedContainerColor = ExpenseRed.copy(alpha = 0.15f),
                         selectedLabelColor = ExpenseRed
                     ),
-                    modifier = Modifier.weight(1f).testTag("quick_add_chip_expense")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("quick_add_chip_expense")
                 )
                 FilterChip(
                     selected = type == "in",
@@ -238,7 +390,9 @@ fun QuickAddTransactionDialog(
                         selectedContainerColor = IncomeGreen.copy(alpha = 0.15f),
                         selectedLabelColor = IncomeGreen
                     ),
-                    modifier = Modifier.weight(1f).testTag("quick_add_chip_income")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("quick_add_chip_income")
                 )
             }
 
@@ -395,11 +549,22 @@ fun QuickAddTransactionDialog(
                         } else selectedCategory
 
                         if (name.isNotBlank() && amt > 0) {
-                            onSave(name, type, finalCat, amt, dateText, selectedCardId)
+                            onSave(
+                                name,
+                                type,
+                                finalCat,
+                                amt,
+                                dateText,
+                                selectedCardId,
+                                activeReceipt?.receiptId ?: ""
+                            )
                             onDismiss()
                         }
                     },
-                    enabled = name.isNotBlank() && (amountText.toDoubleOrNull() ?: 0.0) > 0 && selectedCategory.isNotBlank(),
+                    enabled = !isBlockedByDuplicate &&
+                        name.isNotBlank() &&
+                        (amountText.toDoubleOrNull() ?: 0.0) > 0 &&
+                        selectedCategory.isNotBlank(),
                     modifier = Modifier.testTag("quick_add_save_button")
                 ) {
                     Text("Uložiť platbu")
@@ -418,22 +583,34 @@ fun QuickAddTransactionDialog(
                 showScanner = false
                 isLoadingReceipt = true
                 scannerErrorMessage = null
+                duplicateFullReceipt = null
+                duplicateAcknowledged = false
+
                 coroutineScope.launch {
-                    val result = EkasaReceiptService.fetchReceipt(receiptId)
+                    // 1. Persist QR code right away and check for FULL duplicate
+                    val existingOrNew = onRegisterScannedReceipt(receiptId)
+                    if (existingOrNew.allocationStatus == EkasaAllocationStatus.FULL) {
+                        duplicateFullReceipt = existingOrNew
+                    }
+                    activeReceipt = existingOrNew
+
+                    // 2. Fetch live receipt details + items from Finančná správa
+                    val result = onFetchAndSaveReceipt(receiptId)
                     result.fold(
-                        onSuccess = { data ->
-                            name = data.organizationName
-                            amountText = if (data.totalPrice > 0) {
-                                String.format(Locale.US, "%.2f", data.totalPrice)
+                        onSuccess = { saved ->
+                            activeReceipt = saved
+                            name = saved.organizationName
+                            amountText = if (saved.totalPrice > 0) {
+                                String.format(Locale.US, "%.2f", saved.totalPrice)
                             } else ""
-                            dateText = data.formattedDate
+                            dateText = saved.issueDate
                             type = "out"
-                            selectedCategory = "" // User chooses category as requested
+                            selectedCategory = "" // User chooses category manually or splits items
                             isLoadingReceipt = false
                         },
                         onFailure = { error ->
                             isLoadingReceipt = false
-                            scannerErrorMessage = "Chyba overenia bločku: ${error.localizedMessage}"
+                            scannerErrorMessage = "QR kód ($receiptId) bol uložený do histórie bločkov, no stiahnutie z FS zlyhalo: ${error.localizedMessage}"
                         }
                     )
                 }

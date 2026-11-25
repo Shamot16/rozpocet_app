@@ -12,6 +12,8 @@ import com.example.data.model.CashflowDayEntry
 import com.example.data.model.CreditCard
 import com.example.data.model.MonthForecast
 import com.example.data.model.PlanVsActualRow
+import com.example.data.model.SavedEkasaReceipt
+import com.example.data.model.SplitCategoryBatch
 import com.example.data.model.Transaction
 import com.example.data.repository.BudgetRepository
 import com.example.domain.BudgetEngine
@@ -58,6 +60,14 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         _showQuickAddDialog.value = show
     }
 
+    // Active receipt in the multi-category splitter dialog
+    private val _receiptToSplit = MutableStateFlow<SavedEkasaReceipt?>(null)
+    val receiptToSplit: StateFlow<SavedEkasaReceipt?> = _receiptToSplit.asStateFlow()
+
+    fun openReceiptSplitter(receipt: SavedEkasaReceipt?) {
+        _receiptToSplit.value = receipt
+    }
+
     // User feedback message
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
@@ -83,6 +93,9 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val cardPayments: StateFlow<List<CardPayment>> = repository.cardPayments
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val ekasaReceipts: StateFlow<List<SavedEkasaReceipt>> = repository.ekasaReceipts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Current date helpers
@@ -241,7 +254,8 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         category: String,
         amount: Double,
         date: String,
-        cardId: String
+        cardId: String,
+        ekasaReceiptId: String = ""
     ) {
         if (name.isBlank() || amount <= 0) return
         viewModelScope.launch {
@@ -252,13 +266,75 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
                 category = category,
                 amount = amount,
                 date = date,
-                cardId = if (type == "out") cardId else ""
+                cardId = if (type == "out") cardId else "",
+                ekasaReceiptId = ekasaReceiptId
             )
-            repository.addTransaction(tx)
+            if (ekasaReceiptId.isNotBlank()) {
+                repository.saveFullEkasaTransaction(
+                    tx = tx,
+                    receiptId = ekasaReceiptId,
+                    organizationName = name.trim(),
+                    issueDate = date,
+                    totalPrice = amount
+                )
+            } else {
+                repository.addTransaction(tx)
+            }
             // Auto update month selector if needed
             val mStr = if (date.length >= 7) date.substring(0, 7) else defaultActualMonth
             _selectedActualMonth.value = mStr
             _userMessage.value = "Platba '${tx.name}' zapísaná."
+        }
+    }
+
+    suspend fun registerScannedReceipt(receiptId: String): SavedEkasaReceipt {
+        return repository.registerScannedReceiptId(receiptId)
+    }
+
+    suspend fun fetchAndSaveEkasaReceipt(receiptId: String): Result<SavedEkasaReceipt> {
+        return repository.fetchAndSaveEkasaReceipt(receiptId)
+    }
+
+    fun saveSplitEkasaBatches(
+        receipt: SavedEkasaReceipt,
+        batches: List<SplitCategoryBatch>,
+        cardId: String,
+        customDate: String
+    ) {
+        if (batches.isEmpty()) return
+        viewModelScope.launch {
+            repository.saveSplitEkasaBatches(receipt, batches, cardId, customDate)
+            val targetDate = customDate.ifBlank { receipt.issueDate }
+            val mStr = if (targetDate.length >= 7) targetDate.substring(0, 7) else defaultActualMonth
+            _selectedActualMonth.value = mStr
+            _receiptToSplit.value = null
+            _userMessage.value = "Uložených ${batches.size} platieb z eKasa dokladu."
+        }
+    }
+
+    fun refetchEkasaReceipt(receiptId: String, onFinished: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val result = repository.fetchAndSaveEkasaReceipt(receiptId)
+            result.fold(
+                onSuccess = { saved ->
+                    if (_receiptToSplit.value?.receiptId == saved.receiptId) {
+                        _receiptToSplit.value = saved
+                    }
+                    _userMessage.value = "Doklad '${saved.organizationName}' bol aktualizovaný (${saved.items.size} položiek)."
+                    onFinished(true)
+                },
+                onFailure = { err ->
+                    _userMessage.value = "Chyba načítania dokladu: ${err.localizedMessage}"
+                    onFinished(false)
+                }
+            )
+        }
+    }
+
+    fun deleteEkasaReceipt(receiptId: String) {
+        viewModelScope.launch {
+            repository.deleteEkasaReceipt(receiptId)
+            _userMessage.value = "Doklad bol odstránený z histórie."
         }
     }
 

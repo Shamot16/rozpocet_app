@@ -1,5 +1,7 @@
 package com.example.data.model
 
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -20,8 +22,108 @@ data class Transaction(
     val category: String,
     val amount: Double,
     val date: String, // "YYYY-MM-DD"
-    val cardId: String = "" // ID of credit card or empty string
+    val cardId: String = "", // ID of credit card or empty string
+    val ekasaReceiptId: String = "" // Linked eKasa receiptId if created from QR receipt
 )
+
+enum class EkasaAllocationStatus(val label: String) {
+    SCANNED_ONLY("Naskenovaný"),
+    PARTIAL("Čiastočne rozdelený"),
+    FULL("Plne uložený");
+
+    companion object {
+        fun fromString(raw: String): EkasaAllocationStatus {
+            return entries.firstOrNull { it.name == raw } ?: SCANNED_ONLY
+        }
+    }
+}
+
+data class EkasaLineItem(
+    val index: Int,
+    val name: String,
+    val quantity: Double,
+    val price: Double,
+    val itemType: String = "K",
+    val assignedCategory: String = ""
+)
+
+data class SavedEkasaReceipt(
+    val receiptId: String,
+    val organizationName: String,
+    val issueDate: String,
+    val totalPrice: Double,
+    val items: List<EkasaLineItem>,
+    val allocationStatus: EkasaAllocationStatus,
+    val lastFetchedAt: Long,
+    val updatedAt: Long
+) {
+    val assignedAmount: Double
+        get() = items.filter { it.assignedCategory.isNotBlank() }.sumOf { it.price }
+
+    val remainingAmount: Double
+        get() = maxOf(0.0, totalPrice - assignedAmount)
+
+    val unassignedCount: Int
+        get() = items.count { it.assignedCategory.isBlank() }
+
+    val shortReceiptId: String
+        get() = if (receiptId.length > 12) {
+            "${receiptId.take(6)}…${receiptId.takeLast(4)}"
+        } else {
+            receiptId
+        }
+}
+
+data class SplitCategoryBatch(
+    val category: String,
+    val itemIndices: List<Int>,
+    val itemNames: List<String>,
+    val amount: Double
+)
+
+object EkasaItemCodec {
+    private val moshi: Moshi by lazy { Moshi.Builder().build() }
+    private val listType = Types.newParameterizedType(
+        List::class.java,
+        Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
+    )
+    private val listAdapter by lazy { moshi.adapter<List<Map<String, Any?>>>(listType) }
+
+    fun encodeItems(items: List<EkasaLineItem>): String {
+        val raw = items.map { item ->
+            buildMap<String, Any?> {
+                put("index", item.index)
+                put("name", item.name)
+                put("qty", item.quantity)
+                put("price", item.price)
+                put("itemType", item.itemType)
+                if (item.assignedCategory.isNotBlank()) {
+                    put("cat", item.assignedCategory)
+                }
+            }
+        }
+        return listAdapter.toJson(raw) ?: "[]"
+    }
+
+    fun decodeItems(json: String): List<EkasaLineItem> {
+        if (json.isBlank()) return emptyList()
+        return try {
+            val rawList = listAdapter.fromJson(json).orEmpty()
+            rawList.mapIndexed { i, obj ->
+                EkasaLineItem(
+                    index = (obj["index"] as? Number)?.toInt() ?: i,
+                    name = (obj["name"] as? String)?.ifBlank { null } ?: "Položka ${i + 1}",
+                    quantity = (obj["qty"] as? Number)?.toDouble() ?: 1.0,
+                    price = (obj["price"] as? Number)?.toDouble() ?: 0.0,
+                    itemType = (obj["itemType"] as? String)?.ifBlank { null } ?: "K",
+                    assignedCategory = (obj["cat"] as? String) ?: ""
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+}
 
 data class CreditCard(
     val id: String,
